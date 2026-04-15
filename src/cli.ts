@@ -30,6 +30,7 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  process.env.CURSOR_SKIP_KEYCHAIN = "1";
   const args = parseArgs(process.argv.slice(2));
 
   if (args.help) {

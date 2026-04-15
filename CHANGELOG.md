@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4] — 2026-04-15
+
+### Fixed
+- **ACP keychain guard** — `buildAcpSpawnEnv` no longer copies `CURSOR_SKIP_KEYCHAIN` from the parent `process.env`, which could overwrite the forced `"1"` (e.g. parent had `0` or empty). The skip flag is now applied last so it cannot be disabled by config or environment.
+- **`acpEnv` and CLI entry** — bridge config always sets `CURSOR_SKIP_KEYCHAIN=1` on `acpEnv`; the CLI sets it at process start; the programmatic `client` proxy spawner injects it for the child.
+
 ## [0.7.3] — 2026-04-15
 
 ### Changed

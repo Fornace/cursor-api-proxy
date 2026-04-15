@@ -58,6 +58,7 @@ export function loadBridgeConfig(opts: EnvOptions = {}): BridgeConfig {
   const acpArgs = acpResolved.args;
 
   const acpEnv = { ...acpResolved.env } as Record<string, string | undefined>;
+  acpEnv.CURSOR_SKIP_KEYCHAIN = "1";
   if (apiKey) {
     acpEnv.CURSOR_API_KEY = apiKey;
     acpEnv.CURSOR_AUTH_TOKEN = apiKey;

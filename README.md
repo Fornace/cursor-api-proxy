@@ -21,7 +21,9 @@ This package works as **one npm dependency**: use it as an **SDK** in your app t
 
 ## macOS Keychain
 
-This fork **always** forces `CURSOR_SKIP_KEYCHAIN=1` into every spawned Cursor agent process. The macOS keychain popup will never appear, regardless of what the parent process sets. No configuration needed.
+This fork **always** forces `CURSOR_SKIP_KEYCHAIN=1` into every spawned Cursor agent process (CLI path and ACP). For ACP, the variable is applied **last** when building the child environment so a mistaken parent value (for example `CURSOR_SKIP_KEYCHAIN=0`) cannot override it.
+
+If you still see a system keychain prompt, it is usually the **Cursor `agent` binary** accessing the login keychain directly; updating the Cursor CLI and ensuring `agent login` or `CURSOR_API_KEY` is set typically avoids repeated prompts.
 
 ## Install
 

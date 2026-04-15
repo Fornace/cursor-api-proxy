@@ -168,7 +168,7 @@ export async function ensureProxyRunning(
       stdio: "ignore",
       detached: false,
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, CURSOR_SKIP_KEYCHAIN: "1" },
     });
     child.unref();
     installShutdownHandlers();

@@ -43,8 +43,12 @@ export type AcpStreamResult = {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
-/** Avoid passing the entire parent environment into ACP children (may contain unrelated secrets). */
-function buildAcpSpawnEnv(
+/**
+ * Avoid passing the entire parent environment into ACP children (may contain unrelated secrets).
+ * `CURSOR_SKIP_KEYCHAIN` must never be inherited from the parent: a mistaken "0" or empty
+ * value there would re-enable keychain prompts. Apply it last so `extra` cannot disable it.
+ */
+export function buildAcpSpawnEnv(
   extra?: Record<string, string | undefined>,
 ): NodeJS.ProcessEnv {
   const inheritKeys = [
@@ -67,9 +71,8 @@ function buildAcpSpawnEnv(
     "PROGRAMDATA",
     "PUBLIC",
     "NODE_OPTIONS",
-    "CURSOR_SKIP_KEYCHAIN",
   ];
-  const out: NodeJS.ProcessEnv = { CURSOR_SKIP_KEYCHAIN: "1" };
+  const out: NodeJS.ProcessEnv = {};
   for (const k of inheritKeys) {
     const v = process.env[k];
     if (v !== undefined) out[k] = v;
@@ -79,6 +82,7 @@ function buildAcpSpawnEnv(
       if (v !== undefined) out[k] = v;
     }
   }
+  out.CURSOR_SKIP_KEYCHAIN = "1";
   return out;
 }
 
