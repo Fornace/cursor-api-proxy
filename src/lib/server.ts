@@ -131,6 +131,17 @@ function startSingleServer(
   server.listen(config.port, config.host, () => {
     const scheme = useTls ? "https" : "http";
     console.log(
+      JSON.stringify({
+        cursorComposerProxy: {
+          version: opts.version,
+          pid: process.pid,
+          listen: `${scheme}://${config.host}:${config.port}`,
+          CI: process.env.CI,
+          CURSOR_SKIP_KEYCHAIN: process.env.CURSOR_SKIP_KEYCHAIN,
+        },
+      }),
+    );
+    console.log(
       `cursor-api-proxy listening on ${scheme}://${config.host}:${config.port}`,
     );
     console.log(`- agent bin: ${config.agentBin}`);

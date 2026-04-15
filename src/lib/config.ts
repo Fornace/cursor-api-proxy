@@ -54,7 +54,12 @@ export function loadBridgeConfig(opts: EnvOptions = {}): BridgeConfig {
   const env = loadEnvConfig(opts);
   const acpResolved = resolveAgentCommand(env.agentBin, ["acp"], opts);
   const envSource = opts.env ?? process.env;
-  const apiKey = envSource.CURSOR_API_KEY ?? envSource.CURSOR_AUTH_TOKEN;
+  // Bridge key gates HTTP only unless mirrored here — without a token the Cursor CLI falls back
+  // to login/keychain (bad for headless/macOS). Prefer explicit CURSOR_* for agent when they differ.
+  const apiKey =
+    envSource.CURSOR_API_KEY ??
+    envSource.CURSOR_AUTH_TOKEN ??
+    envSource.CURSOR_BRIDGE_API_KEY;
   const acpArgs = acpResolved.args;
 
   const acpEnv = { ...acpResolved.env } as Record<string, string | undefined>;

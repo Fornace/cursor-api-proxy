@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.8] — 2026-04-16
+
+### Fixed
+- **`loadBridgeConfig`** — If `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` are unset, the agent now falls back to **`CURSOR_BRIDGE_API_KEY`**, so headless runs that only set the bridge secret (HTTP auth) still pass a token to the Cursor CLI and avoid macOS keychain / login-only paths.
+
+## [0.7.7] — 2026-04-15
+
+### Changed
+- **CLI** — `CI` is set with `=` (not `??=`) so a parent process cannot leave a bad `CI` value that re-enables keychain probes.
+- **Server** — On listen, logs one JSON line with `version`, `pid`, listen URL, `CI`, and `CURSOR_SKIP_KEYCHAIN` for debugging alongside claude-overnight.
+
 ## [0.7.6] — 2026-04-15
 
 ### Fixed

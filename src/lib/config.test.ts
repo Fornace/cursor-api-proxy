@@ -76,6 +76,33 @@ describe("loadBridgeConfig", () => {
     expect(config.acpEnv.CI).toBe("true");
   });
 
+  it("falls back to CURSOR_BRIDGE_API_KEY for agent when CURSOR_API_KEY is unset", () => {
+    const config = loadBridgeConfig({
+      env: {
+        CURSOR_BRIDGE_API_KEY: "bridge-only-token",
+        CURSOR_AGENT_BIN: "agent",
+      },
+      cwd: "/workspace",
+    });
+    expect(config.requiredKey).toBe("bridge-only-token");
+    expect(config.acpEnv.CURSOR_API_KEY).toBe("bridge-only-token");
+    expect(config.acpEnv.CURSOR_AUTH_TOKEN).toBe("bridge-only-token");
+    expect(config.acpSkipAuthenticate).toBe(true);
+  });
+
+  it("prefers CURSOR_API_KEY over CURSOR_BRIDGE_API_KEY for agent", () => {
+    const config = loadBridgeConfig({
+      env: {
+        CURSOR_API_KEY: "explicit-agent",
+        CURSOR_BRIDGE_API_KEY: "bridge-http",
+        CURSOR_AGENT_BIN: "agent",
+      },
+      cwd: "/workspace",
+    });
+    expect(config.acpEnv.CURSOR_API_KEY).toBe("explicit-agent");
+    expect(config.acpEnv.CURSOR_AUTH_TOKEN).toBe("explicit-agent");
+  });
+
   it("allows CURSOR_BRIDGE_ACP_SKIP_AUTHENTICATE to force skip", () => {
     const config = loadBridgeConfig({
       env: {
