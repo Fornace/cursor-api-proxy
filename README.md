@@ -19,6 +19,10 @@ This package works as **one npm dependency**: use it as an **SDK** in your app t
 
   For automation, set `CURSOR_API_KEY` instead of using `agent login`.
 
+## macOS Keychain
+
+This fork **always** forces `CURSOR_SKIP_KEYCHAIN=1` into every spawned Cursor agent process. The macOS keychain popup will never appear, regardless of what the parent process sets. No configuration needed.
+
 ## Install
 
 **From npm (use as SDK in another project):**
@@ -190,6 +194,7 @@ Environment handling is centralized in one module. Aliases, defaults, path resol
 | `CURSOR_CONFIG_DIRS` | — | Comma-separated configuration directories for round-robin account rotation (alias: `CURSOR_ACCOUNT_DIRS`). Auto-discovers authenticated accounts under `~/.cursor-api-proxy/accounts/` when unset. |
 | `CURSOR_BRIDGE_MULTI_PORT` | `false` | When `true` and multiple config dirs are set, spawns a separate server per directory on incrementing ports starting from `CURSOR_BRIDGE_PORT`. |
 | `CURSOR_BRIDGE_PROMPT_VIA_STDIN` | `false` | When `true`, sends the user prompt via **stdin** instead of argv (helps on Windows if argv is truncated). |
+| `CURSOR_SKIP_KEYCHAIN` | `1` (always) | **Always injected** into every spawned agent process. The macOS keychain popup is suppressed by default. |
 | `CURSOR_BRIDGE_USE_ACP` | `false` | When `true`, uses **ACP (Agent Client Protocol)** over stdio (`agent acp`). Avoids Windows argv limits. See [Cursor ACP docs](https://cursor.com/docs/cli/acp). Set `NODE_DEBUG=cursor-api-proxy:acp` to debug. |
 | `CURSOR_BRIDGE_ACP_SKIP_AUTHENTICATE` | auto | When `CURSOR_API_KEY` is set, skips the ACP authenticate step. Set to `true` to skip when using `agent login` instead. |
 | `CURSOR_BRIDGE_ACP_RAW_DEBUG` | `false` | When `1` or `true`, log raw JSON-RPC from ACP stdout (requires `NODE_DEBUG=cursor-api-proxy:acp`). |
