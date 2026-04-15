@@ -2,7 +2,9 @@
   "name": "@claude-overnight/cursor-api-proxy",
   "version": "0.7.2",
   "description": "OpenAI-compatible proxy for Cursor CLI — forked with macOS keychain skip and system Node.js support",
-  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "files": [
     "dist",
