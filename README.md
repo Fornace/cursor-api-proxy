@@ -187,7 +187,7 @@ Environment handling is centralized in one module. Aliases, defaults, path resol
 | `CURSOR_BRIDGE_API_KEY` | — | If set, require `Authorization: Bearer <key>` on requests. Also used as the **agent** token when `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` are unset (same value as typical automation setups). |
 | `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` | — | Cursor access token passed to spawned CLI/ACP children (automation, headless). Same value can be used for both names. Takes precedence over `CURSOR_BRIDGE_API_KEY` for the agent. |
 | `CURSOR_BRIDGE_WORKSPACE` | process cwd | Base workspace directory for Cursor CLI. With `CURSOR_BRIDGE_CHAT_ONLY_WORKSPACE=false`, header `X-Cursor-Workspace` must point to an **existing directory under this path** (after resolving real paths). |
-| `CURSOR_BRIDGE_MODE` | — | Ignored; proxy always runs in **ask** (chat-only) mode so the CLI never creates or edits files. |
+| `CURSOR_BRIDGE_MODE` | `ask` | Execution mode — `ask` (chat-only, default) or `plan` (can create/edit plans). |
 | `CURSOR_BRIDGE_DEFAULT_MODEL` | `auto` | Default model when request omits one |
 | `CURSOR_BRIDGE_STRICT_MODEL` | `true` | Use last requested model when none specified |
 | `CURSOR_BRIDGE_FORCE` | `false` | Pass `--force` to Cursor CLI |

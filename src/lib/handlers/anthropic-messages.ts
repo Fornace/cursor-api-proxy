@@ -35,8 +35,35 @@ import {
   warnPromptTruncated,
 } from "../win-cmdline-limit.js";
 
-function isRateLimited(stderr: string): boolean {
-  return /\b429\b|rate.?limit|too many requests/i.test(stderr);
+function analyzeStderr(stderr: string): {
+  isRateLimited: boolean;
+  isMaxTurns: boolean;
+  isError: boolean;
+} {
+  if (!stderr) return { isRateLimited: false, isMaxTurns: false, isError: false };
+
+  const isRateLimited = /\b429\b|rate.?limit|too many requests/i.test(stderr);
+  const isMaxTurns = /max.?turn|max_turn|turn.?limit|exceeded.*turn/i.test(stderr);
+  const isError = /\berror\b|\bfail(?:ed|ure)?\b|\bexception\b|\babort(?:ed)?\b/i.test(stderr);
+
+  return { isRateLimited, isMaxTurns, isError };
+}
+
+function estimateTokens(chars: number): number {
+  return Math.max(1, Math.round(chars / 4));
+}
+
+function logLatency(
+  latencyMs: number,
+  displayModel: string | undefined,
+  suffix: string,
+): void {
+  const latencySec = (latencyMs / 1000).toFixed(1);
+  if (latencyMs > 60_000) {
+    console.warn(
+      `[${new Date().toISOString()}] SLOW response: ${latencySec}s (model=${displayModel}${suffix})`,
+    );
+  }
 }
 
 export type AnthropicMessagesCtx = {
@@ -174,8 +201,26 @@ export async function handleAnthropicMessages(
     });
 
     const writeEvent = (evt: object) => {
-      res.write(`data: ${JSON.stringify(evt)}\n\n`);
+      if (!res.writable) return;
+      try {
+        res.write(`data: ${JSON.stringify(evt)}\n\n`);
+      } catch {
+        /* socket closed, ignore */
+      }
     };
+
+    // Keep-alive heartbeats so HTTP intermediaries don't drop the connection
+    // during long silent periods (thinking models, slow tool calls).
+    const heartbeatInterval = setInterval(() => {
+      if (res.writable) {
+        try {
+          res.write(": keep-alive\n\n");
+        } catch {
+          /* socket closed */
+        }
+      }
+    }, 15_000);
+    const clearHeartbeat = () => clearInterval(heartbeatInterval);
 
     writeEvent({
       type: "message_start",
@@ -202,6 +247,30 @@ export async function handleAnthropicMessages(
     req.once("close", () => abortController.abort());
 
     let accumulatedText = "";
+    let turnCount = 0;
+    const idleTimeoutMs = 120_000; // 2 min idle → kill
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        clearHeartbeat();
+        abortController.abort();
+        sse.closeCurrent();
+        writeEvent({
+          type: "message_delta",
+          delta: { stop_reason: "error", stop_sequence: null },
+          usage: { output_tokens: 0 },
+        });
+        writeEvent({
+          type: "error",
+          error: { type: "api_error", message: "Streaming timed out after 2 minutes of inactivity" },
+        });
+        res.end();
+      }, idleTimeoutMs);
+    };
+
+    resetIdleTimer();
 
     runAgentStream(
       config,
@@ -210,6 +279,8 @@ export async function handleAnthropicMessages(
       {
         onEvent: (event) => {
           if (event.kind === "text") accumulatedText += event.text;
+          if (event.kind === "tool_use") turnCount++;
+          resetIdleTimer();
           sse.emit(event);
         },
       },
@@ -221,9 +292,29 @@ export async function handleAnthropicMessages(
       .then(({ code, stderr: stderrOut }) => {
         const latencyMs = Date.now() - streamStart;
         reportRequestEnd(configDir);
+        clearHeartbeat();
+        if (idleTimer) clearTimeout(idleTimer);
 
-        if (stderrOut && isRateLimited(stderrOut)) {
+        const analysis = analyzeStderr(stderrOut);
+        if (analysis.isRateLimited) {
           reportRateLimit(configDir, 60000);
+        }
+        if (analysis.isMaxTurns) {
+          console.warn(
+            `[${new Date().toISOString()}] Cursor agent hit internal max_turns limit (stderr tail: ${stderrOut.slice(-300)})`,
+          );
+        }
+
+        logLatency(latencyMs, displayModel, `, turns=${turnCount}`);
+        if (config.verbose) {
+          console.log(
+            `[${new Date().toISOString()}] Response in ${(latencyMs / 1000).toFixed(1)}s (model=${displayModel}, turns=${turnCount})`,
+          );
+        }
+        if (turnCount > 0) {
+          console.log(
+            `[${new Date().toISOString()}] Agent completed with ${turnCount} tool turns (code=${code}) in ${latencyMs}ms`,
+          );
         }
 
         if (!abortController.signal.aborted) {
@@ -238,6 +329,11 @@ export async function handleAnthropicMessages(
               stderrOut,
             );
             sse.closeCurrent();
+            writeEvent({
+              type: "message_delta",
+              delta: { stop_reason: "error", stop_sequence: null },
+              usage: { output_tokens: 0 },
+            });
             writeEvent({
               type: "error",
               error: { type: "api_error", message: publicMsg },
@@ -254,7 +350,10 @@ export async function handleAnthropicMessages(
             writeEvent({
               type: "message_delta",
               delta: { stop_reason: "end_turn", stop_sequence: null },
-              usage: { output_tokens: 0 },
+              usage: {
+                input_tokens: estimateTokens(prompt.length),
+                output_tokens: estimateTokens(accumulatedText.length),
+              },
             });
             writeEvent({ type: "message_stop" });
           }
@@ -264,6 +363,8 @@ export async function handleAnthropicMessages(
       })
       .catch((err) => {
         reportRequestEnd(configDir);
+        clearHeartbeat();
+        if (idleTimer) clearTimeout(idleTimer);
         if (!abortController.signal.aborted) {
           reportRequestError(configDir, Date.now() - streamStart);
         }
@@ -273,6 +374,11 @@ export async function handleAnthropicMessages(
         );
         if (!abortController.signal.aborted) {
           sse.closeCurrent();
+          writeEvent({
+            type: "message_delta",
+            delta: { stop_reason: "error", stop_sequence: null },
+            usage: { output_tokens: 0 },
+          });
           writeEvent({
             type: "error",
             error: {
@@ -306,8 +412,21 @@ export async function handleAnthropicMessages(
   const syncLatency = Date.now() - syncStart;
   reportRequestEnd(configDir);
 
-  if (out.stderr && isRateLimited(out.stderr)) {
+  const analysis = analyzeStderr(out.stderr);
+  if (analysis.isRateLimited) {
     reportRateLimit(configDir, 60000);
+  }
+  if (analysis.isMaxTurns) {
+    console.warn(
+      `[${new Date().toISOString()}] Cursor agent hit internal max_turns limit (stderr tail: ${out.stderr.slice(-300)})`,
+    );
+  }
+
+  logLatency(syncLatency, displayModel, " [sync]");
+  if (config.verbose) {
+    console.log(
+      `[${new Date().toISOString()}] Response in ${(syncLatency / 1000).toFixed(1)}s (model=${displayModel}) [sync]`,
+    );
   }
 
   if (out.code !== 0) {
@@ -331,8 +450,8 @@ export async function handleAnthropicMessages(
   const content = out.stdout.trim();
   logTrafficResponse(config.verbose, model ?? cursorModel, content, false);
   logAccountStats(config.verbose, getAccountStats());
-  const inTok = Math.max(1, Math.round(prompt.length / 4));
-  const outTok = Math.max(1, Math.round(content.length / 4));
+  const inTok = estimateTokens(prompt.length);
+  const outTok = estimateTokens(content.length);
   json(
     res,
     200,

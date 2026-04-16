@@ -56,11 +56,15 @@ export function resolveWorkspace(
     const cursorDir = path.join(tempDir, ".cursor");
     fs.mkdirSync(cursorDir, { recursive: true });
     fs.mkdirSync(path.join(cursorDir, "rules"), { recursive: true });
-    const minimalConfig = {
+    const minimalConfig: Record<string, unknown> = {
       version: 1,
       editor: { vimMode: false },
       permissions: { allow: [], deny: [] },
     };
+    if (config.maxMode) {
+      minimalConfig.maxMode = true;
+      minimalConfig.model = { maxMode: true };
+    }
     fs.writeFileSync(
       path.join(cursorDir, "cli-config.json"),
       JSON.stringify(minimalConfig, null, 0),

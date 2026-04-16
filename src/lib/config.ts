@@ -79,7 +79,7 @@ export function loadBridgeConfig(opts: EnvOptions = {}): BridgeConfig {
     port: env.port,
     requiredKey: env.requiredKey,
     defaultModel: env.defaultModel,
-    mode: "ask", // proxy is chat-only; CURSOR_BRIDGE_MODE is ignored
+    mode: env.mode as CursorExecutionMode, // "ask" (default) or "plan" via CURSOR_BRIDGE_MODE
     force: env.force,
     approveMcps: env.approveMcps,
     strictModel: env.strictModel,
