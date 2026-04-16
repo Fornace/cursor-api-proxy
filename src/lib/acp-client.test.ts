@@ -5,6 +5,7 @@ import {
   runAcpStream,
   runAcpSync,
 } from "./acp-client.js";
+import type { AgentStreamEvent } from "./agent-stream-events.js";
 
 const node = process.execPath;
 const cwd = process.cwd();
@@ -156,8 +157,8 @@ describe("runAcpSync", () => {
 });
 
 describe("runAcpStream", () => {
-  it("streams chunks from session/update", async () => {
-    const chunks: string[] = [];
+  it("streams text events from session/update", async () => {
+    const events: AgentStreamEvent[] = [];
     const result = await runAcpStream(
       node,
       [fakeServerPath],
@@ -167,22 +168,67 @@ describe("runAcpStream", () => {
         timeoutMs: 5000,
         skipAuthenticate: true,
       },
-      (t) => chunks.push(t),
+      (e) => events.push(e),
     );
     expect(result.code).toBe(0);
-    expect(chunks.join("")).toContain("Hello from fake ACP");
+    const text = events
+      .filter((e) => e.kind === "text")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toContain("Hello from fake ACP");
+  });
+
+  it("forwards thinking and tool_call events", async () => {
+    const events: AgentStreamEvent[] = [];
+    const result = await runAcpStream(
+      node,
+      [fakeServerPath],
+      "go",
+      {
+        cwd,
+        timeoutMs: 5000,
+        skipAuthenticate: true,
+        env: { FAKE_ACP_SCENARIO: "with_tool_and_thinking" },
+      },
+      (e) => events.push(e),
+    );
+    expect(result.code).toBe(0);
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("thinking");
+    expect(kinds).toContain("tool_use");
+    expect(kinds).toContain("text");
+
+    const thinking = events.find((e) => e.kind === "thinking");
+    expect(thinking && thinking.kind === "thinking" && thinking.text).toBe(
+      "pondering",
+    );
+
+    const tool = events.find((e) => e.kind === "tool_use");
+    expect(tool && tool.kind === "tool_use" && tool.id).toBe("tc_1");
+    expect(tool && tool.kind === "tool_use" && tool.name).toBe("Reading foo.ts");
   });
 
   it("sends session/set_config_option with configId when model is set", async () => {
-    const chunks: string[] = [];
-    const result = await runAcpStream(node, [fakeServerPath], "stream", {
-      cwd,
-      timeoutMs: 5000,
-      skipAuthenticate: true,
-      model: "gpt-4",
-    }, (t) => chunks.push(t));
+    const events: AgentStreamEvent[] = [];
+    const result = await runAcpStream(
+      node,
+      [fakeServerPath],
+      "stream",
+      {
+        cwd,
+        timeoutMs: 5000,
+        skipAuthenticate: true,
+        model: "gpt-4",
+      },
+      (e) => events.push(e),
+    );
     expect(result.code).toBe(0);
-    expect(chunks.join("")).toContain("Hello from fake ACP");
+    const text = events
+      .filter((e) => e.kind === "text")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toContain("Hello from fake ACP");
     const cfg = parseLastSetConfig(result.stderr);
     expect(cfg).toEqual({
       sessionId: "sess-1",
@@ -192,14 +238,20 @@ describe("runAcpStream", () => {
   });
 
   it("fails when session/set_config_option returns error (stream)", async () => {
-    const chunks: string[] = [];
-    const result = await runAcpStream(node, [fakeServerPath], "x", {
-      cwd,
-      timeoutMs: 5000,
-      skipAuthenticate: true,
-      model: "gpt-4",
-      env: { FAKE_ACP_SCENARIO: "fail_set_config" },
-    }, (t) => chunks.push(t));
+    const events: AgentStreamEvent[] = [];
+    const result = await runAcpStream(
+      node,
+      [fakeServerPath],
+      "x",
+      {
+        cwd,
+        timeoutMs: 5000,
+        skipAuthenticate: true,
+        model: "gpt-4",
+        env: { FAKE_ACP_SCENARIO: "fail_set_config" },
+      },
+      (e) => events.push(e),
+    );
     expect(result.code).toBe(1);
   });
 });

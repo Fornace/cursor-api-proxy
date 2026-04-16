@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 
 import { runAcpStream, runAcpSync } from "./acp-client.js";
+import type { AgentStreamEvent } from "./agent-stream-events.js";
+import { createStreamParser } from "./cli-stream-parser.js";
 import type { BridgeConfig } from "./config.js";
 import { run, runStreaming } from "./process.js";
 import { getChatOnlyEnvOverrides } from "./workspace.js";
@@ -99,13 +101,16 @@ export function runAgentSync(
   });
 }
 
-export type StreamLineHandler = (line: string) => void;
+export type AgentStreamCallbacks = {
+  onEvent: (event: AgentStreamEvent) => void;
+  onDone?: () => void;
+};
 
 export function runAgentStream(
   config: BridgeConfig,
   workspaceDir: string,
   cmdArgs: string[],
-  onLine: StreamLineHandler,
+  cb: AgentStreamCallbacks,
   tempDir?: string,
   stdinPrompt?: string,
   configDir?: string,
@@ -134,8 +139,9 @@ export function runAgentStream(
         rawDebug: config.acpRawDebug,
         signal,
       },
-      onLine,
+      cb.onEvent,
     ).then((result) => {
+      cb.onDone?.();
       cacheTokenForAccount(configDir);
       if (tempDir) {
         try {
@@ -150,11 +156,12 @@ export function runAgentStream(
   const streamEnvOverrides = config.chatOnlyWorkspace
     ? getChatOnlyEnvOverrides(workspaceDir, configDir)
     : undefined;
+  const parseLine = createStreamParser(cb.onEvent, () => cb.onDone?.());
   return runStreaming(config.agentBin, cmdArgs, {
     cwd: workspaceDir,
     timeoutMs: config.timeoutMs,
     maxMode: config.maxMode,
-    onLine,
+    onLine: parseLine,
     stdinContent: stdinPrompt,
     envOverrides: streamEnvOverrides,
     configDir,

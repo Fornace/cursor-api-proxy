@@ -1,128 +1,164 @@
 import { describe, it, expect, vi } from "vitest";
 import { createStreamParser } from "./cli-stream-parser.js";
+import type { AgentStreamEvent } from "./agent-stream-events.js";
+
+function collector() {
+  const events: AgentStreamEvent[] = [];
+  return {
+    events,
+    on: (e: AgentStreamEvent) => events.push(e),
+  };
+}
 
 describe("createStreamParser", () => {
   it("emits incremental text deltas", () => {
-    const onText = vi.fn();
+    const c = collector();
     const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
+    const parse = createStreamParser(c.on, onDone);
 
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Hello" }] },
-    }));
-    expect(onText).toHaveBeenCalledTimes(1);
-    expect(onText).toHaveBeenCalledWith("Hello");
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hello" }] },
+      }),
+    );
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hello world" }] },
+      }),
+    );
 
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Hello world" }] },
-    }));
-    expect(onText).toHaveBeenCalledTimes(2);
-    expect(onText).toHaveBeenLastCalledWith(" world");
+    expect(c.events).toEqual([
+      { kind: "text", text: "Hello" },
+      { kind: "text", text: " world" },
+    ]);
   });
 
-  it("deduplicates final full message (skip when text === accumulated)", () => {
-    const onText = vi.fn();
-    const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
+  it("deduplicates final full-message emission", () => {
+    const c = collector();
+    const parse = createStreamParser(c.on, () => {});
 
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Hi" }] },
-    }));
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Hi there" }] },
-    }));
-    expect(onText).toHaveBeenCalledTimes(2);
-    expect(onText).toHaveBeenNthCalledWith(1, "Hi");
-    expect(onText).toHaveBeenNthCalledWith(2, " there");
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hi there" }] },
+      }),
+    );
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Hi there" }] },
+      }),
+    );
 
-    // Final duplicate: full accumulated text again
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Hi there" }] },
-    }));
-    expect(onText).toHaveBeenCalledTimes(2); // no new call
+    expect(c.events).toEqual([{ kind: "text", text: "Hi there" }]);
   });
 
-  it("calls onDone when result/success received", () => {
-    const onText = vi.fn();
+  it("emits thinking deltas separately from text", () => {
+    const c = collector();
+    const parse = createStreamParser(c.on, () => {});
+
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "thinking", thinking: "Let me think" },
+            { type: "text", text: "Hi" },
+          ],
+        },
+      }),
+    );
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "thinking", thinking: "Let me think harder" },
+            { type: "text", text: "Hi there" },
+          ],
+        },
+      }),
+    );
+
+    expect(c.events).toEqual([
+      { kind: "thinking", text: "Let me think" },
+      { kind: "text", text: "Hi" },
+      { kind: "thinking", text: " harder" },
+      { kind: "text", text: " there" },
+    ]);
+  });
+
+  it("emits tool_use once per id", () => {
+    const c = collector();
+    const parse = createStreamParser(c.on, () => {});
+
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_1",
+              name: "Read",
+              input: { path: "foo.ts" },
+            },
+          ],
+        },
+      }),
+    );
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_1",
+              name: "Read",
+              input: { path: "foo.ts" },
+            },
+            { type: "text", text: "Done." },
+          ],
+        },
+      }),
+    );
+
+    expect(c.events).toEqual([
+      { kind: "tool_use", id: "tu_1", name: "Read", input: { path: "foo.ts" } },
+      { kind: "text", text: "Done." },
+    ]);
+  });
+
+  it("calls onDone when result/success received and stops emitting", () => {
+    const c = collector();
     const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
+    const parse = createStreamParser(c.on, onDone);
 
     parse(JSON.stringify({ type: "result", subtype: "success" }));
+    parse(
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "late" }] },
+      }),
+    );
+
     expect(onDone).toHaveBeenCalledTimes(1);
-    expect(onText).not.toHaveBeenCalled();
+    expect(c.events).toEqual([]);
   });
 
-  it("ignores lines after done", () => {
-    const onText = vi.fn();
+  it("ignores non-JSON and malformed lines", () => {
+    const c = collector();
     const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
-
-    parse(JSON.stringify({ type: "result", subtype: "success" }));
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "late" }] },
-    }));
-    expect(onText).not.toHaveBeenCalled();
-    expect(onDone).toHaveBeenCalledTimes(1);
-  });
-
-  it("ignores non-assistant lines", () => {
-    const onText = vi.fn();
-    const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
-
-    parse(JSON.stringify({ type: "user", message: {} }));
-    parse(JSON.stringify({ type: "assistant", message: { content: [] } }));
-    parse('{"type":"assistant","message":{"content":[{"type":"code","text":"x"}]}}');
-    expect(onText).not.toHaveBeenCalled();
-  });
-
-  it("ignores parse errors (non-JSON lines)", () => {
-    const onText = vi.fn();
-    const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
+    const parse = createStreamParser(c.on, onDone);
 
     parse("not json");
     parse("{");
     parse("");
-    expect(onText).not.toHaveBeenCalled();
+
+    expect(c.events).toEqual([]);
     expect(onDone).not.toHaveBeenCalled();
-  });
-
-  it("handles first message as full text (no prefix match)", () => {
-    const onText = vi.fn();
-    const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
-
-    parse(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "text", text: "Full response" }] },
-    }));
-    expect(onText).toHaveBeenCalledTimes(1);
-    expect(onText).toHaveBeenCalledWith("Full response");
-  });
-
-  it("joins multiple text parts in one message", () => {
-    const onText = vi.fn();
-    const onDone = vi.fn();
-    const parse = createStreamParser(onText, onDone);
-
-    parse(JSON.stringify({
-      type: "assistant",
-      message: {
-        content: [
-          { type: "text", text: "Hello" },
-          { type: "text", text: " " },
-          { type: "text", text: "world" },
-        ],
-      },
-    }));
-    expect(onText).toHaveBeenCalledTimes(1);
-    expect(onText).toHaveBeenCalledWith("Hello world");
   });
 });

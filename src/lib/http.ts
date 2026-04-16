@@ -32,6 +32,10 @@ export function writeSseHeaders(
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+  // Flush headers immediately and disable Nagle so small SSE frames don't get
+  // coalesced into multi-second chunks — defeats the point of streaming.
+  res.flushHeaders();
+  res.socket?.setNoDelay(true);
 }
 
 export async function readBody(req: http.IncomingMessage): Promise<string> {

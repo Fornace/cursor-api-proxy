@@ -57,7 +57,14 @@ To expose on your network (e.g. Tailscale):
 npx cursor-api-proxy --tailscale
 ```
 
-By default the server listens on **http://127.0.0.1:8765**. Optionally set `CURSOR_BRIDGE_API_KEY` to require `Authorization: Bearer <key>` on requests.
+By default the server listens on **http://127.0.0.1:8765**. Override with `--port <n>` and `--host <h>` (or the `CURSOR_BRIDGE_PORT` / `CURSOR_BRIDGE_HOST` env vars). Optionally set `CURSOR_BRIDGE_API_KEY` to require `Authorization: Bearer <key>` on requests.
+
+To run multiple independent instances on the same machine, launch each with its own `--port` and (optionally) `--config-dir`:
+
+```bash
+npx cursor-api-proxy --port 8765 --config-dir ~/.cursor-api-proxy/accounts/alice &
+npx cursor-api-proxy --port 8766 --config-dir ~/.cursor-api-proxy/accounts/bob &
+```
 
 ### HTTPS with Tailscale (MagicDNS)
 
@@ -234,10 +241,33 @@ set CURSOR_AGENT_SCRIPT=C:\path\to\Cursor\resources\agent\agent.cmd
 
 CLI flags:
 
-| Flag           | Description                                                                                |
-| -------------- | ------------------------------------------------------------------------------------------ |
-| `--tailscale`  | Bind to `0.0.0.0` for access from tailnet/LAN (unless `CURSOR_BRIDGE_HOST` is already set) |
-| `-h`, `--help` | Show CLI usage                                                                             |
+| Flag                  | Description                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `--port <n>`          | Listen port (default `8765`, overrides `CURSOR_BRIDGE_PORT`)                                                   |
+| `--host <h>`          | Listen host (overrides `CURSOR_BRIDGE_HOST`)                                                                   |
+| `--config-dir <path>` | Cursor config dir to use. Repeat the flag to build an account pool; overrides `CURSOR_CONFIG_DIRS` when given. |
+| `--multi-port`        | With multiple `--config-dir`, spawn one server per dir on `port`, `port+1`, … (same as `CURSOR_BRIDGE_MULTI_PORT=true`). |
+| `--tailscale`         | Bind to `0.0.0.0` for access from tailnet/LAN (unless `CURSOR_BRIDGE_HOST` / `--host` is already set)          |
+| `-h`, `--help`        | Show CLI usage                                                                                                 |
+
+CLI flags take precedence over the equivalent environment variables, so you can keep per-instance overrides in a launcher script without touching the shell env.
+
+**Running multiple instances on the same machine.** Give each process a distinct `--port` (and, if you want them to use different accounts, a distinct `--config-dir`). Each instance has its own pool, traffic log, and account bookkeeping:
+
+```bash
+npx cursor-api-proxy --port 8765 --config-dir ~/.cursor-api-proxy/accounts/alice &
+npx cursor-api-proxy --port 8766 --config-dir ~/.cursor-api-proxy/accounts/bob   &
+```
+
+If you want a **single** process that fans out across many accounts on incrementing ports, use `--multi-port` instead:
+
+```bash
+npx cursor-api-proxy --port 8765 \
+  --config-dir ~/.cursor-api-proxy/accounts/alice \
+  --config-dir ~/.cursor-api-proxy/accounts/bob   \
+  --multi-port
+# → alice on 8765, bob on 8766
+```
 
 Optional per-request override: send header `X-Cursor-Workspace: <path>` to use a subdirectory of `CURSOR_BRIDGE_WORKSPACE` for that request (requires `CURSOR_BRIDGE_CHAT_ONLY_WORKSPACE=false` and an existing path on the proxy host).
 
@@ -290,7 +320,30 @@ _Result: account1 is on 8765, account2 is on 8766, etc._
 
 ## Streaming
 
-The proxy supports `stream: true` on `POST /v1/chat/completions` and `POST /v1/messages`. It returns Server-Sent Events (SSE) in OpenAI’s streaming format. Cursor CLI emits incremental deltas plus a final full message; the proxy deduplicates output so clients receive each chunk only once.
+The proxy supports `stream: true` on `POST /v1/chat/completions` and `POST /v1/messages`. Cursor CLI emits incremental deltas plus a final full message; the proxy deduplicates output so clients receive each chunk only once. SSE headers are flushed immediately and `TCP_NODELAY` is set so small frames aren't coalesced.
+
+### `/v1/chat/completions` (OpenAI shape)
+
+Returns SSE in OpenAI's `chat.completion.chunk` format. Each `delta.content` carries a text or thinking chunk (thinking is surfaced as visible content so callers see live progress). Tool calls are not currently synthesized into OpenAI `delta.tool_calls` — use `/v1/messages` if you need structured tool events.
+
+### `/v1/messages` (Anthropic shape)
+
+Returns Anthropic's SSE event stream. The proxy forwards these event types:
+
+| Event                                         | When                                                                                                 |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `message_start`                               | At request start.                                                                                    |
+| `content_block_start { type: "thinking" }`    | Immediately after `message_start` (heartbeat) and whenever the agent starts reasoning.               |
+| `content_block_delta { type: "thinking_delta" }` | Per thinking chunk emitted by cursor-agent (reasoning models / ACP `agent_thought_chunk`).           |
+| `content_block_start { type: "tool_use" }` + `input_json_delta` | Per tool invocation (ACP `tool_call`, or `tool_use` parts in `--stream-json`). `input` is serialized as one `input_json_delta`. |
+| `content_block_start { type: "text" }` + `text_delta` | Assistant output text.                                                                        |
+| `content_block_stop`                          | When the current block is replaced by a block of a different type, or at end of stream.              |
+| `message_delta` + `message_stop`              | At end of stream with `stop_reason: "end_turn"`.                                                     |
+| `error`                                       | On upstream agent failure; the stream is then closed.                                                |
+
+Consumers using `@anthropic-ai/claude-agent-sdk` with `includePartialMessages: true` will see all of the above as `stream_event` messages without any extra work. The heartbeat `thinking` block fires within milliseconds of the request, so clients have an immediate progress signal even when the first real output arrives minutes later (common on reasoning models).
+
+Block `index` is always contiguous and monotonic within a single `message`; only one block is open at a time. When the event type changes (e.g. from `thinking` to `tool_use` to `text`), the proxy closes the previous block with `content_block_stop` before opening the next one.
 
 **Test streaming:** from repo root, with the proxy running:
 

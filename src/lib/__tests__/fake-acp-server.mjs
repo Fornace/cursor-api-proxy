@@ -61,6 +61,36 @@ rl.on("line", (line) => {
       else if (msg.method === "session/set_config_option") result = {};
       else if (msg.method === "session/prompt") {
         result = {};
+        if (scenario === "with_tool_and_thinking") {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                update: {
+                  sessionUpdate: "agent_thought_chunk",
+                  content: { text: "pondering" },
+                },
+              },
+            }) + "\n",
+          );
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "tc_1",
+                  title: "Reading foo.ts",
+                  kind: "read",
+                  status: "in_progress",
+                  locations: [{ path: "foo.ts" }],
+                },
+              },
+            }) + "\n",
+          );
+        }
         process.stdout.write(
           JSON.stringify({
             jsonrpc: "2.0",

@@ -1,6 +1,6 @@
 {
   "name": "cursor-composer-in-claude",
-  "version": "0.7.9",
+  "version": "0.9.0",
   "description": "OpenAI-compatible proxy for Cursor CLI — forked with macOS keychain skip and system Node.js support",
   "type": "module",
   "files": [

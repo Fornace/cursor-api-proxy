@@ -61,6 +61,15 @@ async function main(): Promise<void> {
   }
 
   const config = loadBridgeConfig({ tailscale: args.tailscale });
+  if (args.port != null) config.port = args.port;
+  if (args.host) config.host = args.host;
+  if (args.configDirs.length > 0) {
+    const resolved = args.configDirs.map((d) =>
+      path.isAbsolute(d) ? d : path.resolve(process.cwd(), d),
+    );
+    config.configDirs = resolved;
+  }
+  if (args.multiPort) config.multiPort = true;
   const servers = startBridgeServer({ version: pkg.version, config });
   setupGracefulShutdown(servers);
 }

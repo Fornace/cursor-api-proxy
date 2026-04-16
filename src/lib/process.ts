@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolveAgentCommand } from "./env.js";
 import { runMaxModePreflight } from "./max-mode-preflight.js";
+import { keychainShimNodeOptions } from "./keychain-shim-inject.js";
 
 export type RunResult = {
   code: number;
@@ -89,6 +90,8 @@ function spawnChild(
   // Headless agent runs: skip keychain read/write and CI-style probe (last so callers cannot override).
   env.CURSOR_SKIP_KEYCHAIN = "1";
   env.CI = "true";
+  // Inject keychain shim so the agent's /usr/bin/security calls are intercepted
+  env.NODE_OPTIONS = keychainShimNodeOptions(env.NODE_OPTIONS);
 
   const useStdin = typeof opts?.stdinContent === "string";
   const child = spawn(resolved.command, resolved.args, {

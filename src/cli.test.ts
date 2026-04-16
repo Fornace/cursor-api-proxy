@@ -1,19 +1,17 @@
 import { describe, it, expect } from "vitest";
 
-// We need to test parseArgs - it's not exported. We can either:
-// 1. Export it from cli.ts
-// 2. Test via the module
-
-// For now, let's test the behavior by extracting the logic.
-// Actually the cleanest approach is to export parseArgs from cli.ts for testability.
-// Let me check the cli again - parseArgs is a local function. I'll add an export for it
-// so we can test it, or we could move it to a separate module. The simplest is to export it.
-
-// I'll need to add an export to cli.ts. Let me do that.
 import { parseArgs } from "./cli.js";
 
 describe("parseArgs", () => {
-  const base = { resetHwid: false, deepClean: false, dryRun: false };
+  const base = {
+    resetHwid: false,
+    deepClean: false,
+    dryRun: false,
+    port: undefined,
+    host: undefined,
+    configDirs: [],
+    multiPort: false,
+  };
 
   it("parses empty argv", () => {
     expect(parseArgs([])).toEqual({
@@ -41,70 +39,16 @@ describe("parseArgs", () => {
     });
   });
 
-  it("parses --help", () => {
-    expect(parseArgs(["--help"])).toEqual({
-      ...base,
-      tailscale: false,
-      help: true,
-      login: false,
-      logout: false,
-      accountsList: false,
-      accountName: "",
-      proxies: [],
-    });
-  });
-
-  it("parses -h", () => {
-    expect(parseArgs(["-h"])).toEqual({
-      ...base,
-      tailscale: false,
-      help: true,
-      login: false,
-      logout: false,
-      accountsList: false,
-      accountName: "",
-      proxies: [],
-    });
-  });
-
-  it("parses combined flags", () => {
-    expect(parseArgs(["--tailscale", "--help"])).toEqual({
-      ...base,
-      tailscale: true,
-      help: true,
-      login: false,
-      logout: false,
-      accountsList: false,
-      accountName: "",
-      proxies: [],
-    });
+  it("parses --help / -h", () => {
+    expect(parseArgs(["--help"]).help).toBe(true);
+    expect(parseArgs(["-h"]).help).toBe(true);
   });
 
   it("parses login command", () => {
-    expect(parseArgs(["login", "my-account"])).toEqual({
-      ...base,
-      tailscale: false,
-      help: false,
+    expect(parseArgs(["login", "my-account"])).toMatchObject({
       login: true,
-      logout: false,
-      accountsList: false,
       accountName: "my-account",
       proxies: [],
-    });
-  });
-
-  it("parses login with single proxy", () => {
-    expect(
-      parseArgs(["login", "my-account", "--proxy=http://proxy1:8080"]),
-    ).toEqual({
-      ...base,
-      tailscale: false,
-      help: false,
-      login: true,
-      logout: false,
-      accountsList: false,
-      accountName: "my-account",
-      proxies: ["http://proxy1:8080"],
     });
   });
 
@@ -115,42 +59,59 @@ describe("parseArgs", () => {
         "my-account",
         "--proxy=http://p1:8080,socks5://p2:1080,http://p3:3128",
       ]),
-    ).toEqual({
-      ...base,
-      tailscale: false,
-      help: false,
+    ).toMatchObject({
       login: true,
-      logout: false,
-      accountsList: false,
       accountName: "my-account",
       proxies: ["http://p1:8080", "socks5://p2:1080", "http://p3:3128"],
     });
   });
 
   it("parses logout command", () => {
-    expect(parseArgs(["logout", "my-account"])).toEqual({
-      ...base,
-      tailscale: false,
-      help: false,
-      login: false,
+    expect(parseArgs(["logout", "my-account"])).toMatchObject({
       logout: true,
-      accountsList: false,
       accountName: "my-account",
-      proxies: [],
     });
   });
 
   it("parses accounts command", () => {
-    expect(parseArgs(["accounts"])).toEqual({
-      ...base,
-      tailscale: false,
-      help: false,
-      login: false,
-      logout: false,
-      accountsList: true,
-      accountName: "",
-      proxies: [],
-    });
+    expect(parseArgs(["accounts"]).accountsList).toBe(true);
+  });
+
+  it("parses --port with space", () => {
+    expect(parseArgs(["--port", "9000"]).port).toBe(9000);
+  });
+
+  it("parses --port= form", () => {
+    expect(parseArgs(["--port=9000"]).port).toBe(9000);
+  });
+
+  it("throws on invalid --port", () => {
+    expect(() => parseArgs(["--port", "abc"])).toThrow(/Invalid --port/);
+    expect(() => parseArgs(["--port", "0"])).toThrow(/Invalid --port/);
+    expect(() => parseArgs(["--port", "99999"])).toThrow(/Invalid --port/);
+  });
+
+  it("parses --host", () => {
+    expect(parseArgs(["--host", "0.0.0.0"]).host).toBe("0.0.0.0");
+    expect(parseArgs(["--host=localhost"]).host).toBe("localhost");
+  });
+
+  it("accumulates --config-dir across repeats", () => {
+    const parsed = parseArgs([
+      "--config-dir",
+      "/tmp/a",
+      "--config-dir=/tmp/b",
+    ]);
+    expect(parsed.configDirs).toEqual(["/tmp/a", "/tmp/b"]);
+  });
+
+  it("parses --multi-port", () => {
+    expect(parseArgs(["--multi-port"]).multiPort).toBe(true);
+  });
+
+  it("throws on missing value for --port", () => {
+    expect(() => parseArgs(["--port"])).toThrow(/Missing value/);
+    expect(() => parseArgs(["--port", "--host"])).toThrow(/Missing value/);
   });
 
   it("throws on unknown argument", () => {

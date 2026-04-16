@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] — 2026-04-16
+
+### Added
+- **Rich SSE streaming on `/v1/messages`** — The proxy now forwards `thinking_delta` and `tool_use` blocks emitted by cursor-agent (ACP `tool_call` + `agent_thought_chunk`, and `--stream-json` `tool_use` / `thinking` content parts) as proper Anthropic `content_block_*` events. SDK consumers with `includePartialMessages: true` (e.g. `claude-overnight`) now see live progress during long reasoning / tool-heavy runs instead of a silent spinner.
+- **Thinking heartbeat** — A `content_block_start { type: "thinking" }` is emitted immediately after `message_start` so consumers get an instant "model is working" signal even when the first real event arrives minutes later.
+- **CLI flags** — `--port <n>`, `--host <h>`, `--config-dir <path>` (repeatable), `--multi-port`. Running multiple proxy instances on the same machine no longer requires juggling env vars.
+- **SSE: `flushHeaders()` + `socket.setNoDelay(true)`** so small stream frames aren't coalesced by Nagle / kernel buffering.
+- **macOS keychain shim** — On Darwin, every spawned agent child is now launched with `NODE_OPTIONS=--require …/keychain-shim.cjs` that intercepts `/usr/bin/security` calls in `child_process.spawn` / `execFileSync`. `find-*` operations synthetically return `status 44` ("not found"); other operations return an empty buffer. This suppresses stray keychain prompts even when the Cursor CLI bypasses `CURSOR_SKIP_KEYCHAIN` at the process layer. Set `CURSOR_ALLOW_KEYCHAIN=1` to disable.
+
+### Changed
+- **Internal streaming API** — `runAgentStream` and `runAcpStream` now emit a structured `AgentStreamEvent` union (`{ kind: "text" | "thinking" | "tool_use" }`) instead of raw text chunks. Non-ACP and ACP paths share the same event shape; handlers no longer branch on `config.useAcp`. Consumers of the (previously private) `createStreamParser` helper must update to the new callback signature.
+
 ## [0.7.8] — 2026-04-16
 
 ### Fixed

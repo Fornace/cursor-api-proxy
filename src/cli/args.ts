@@ -9,7 +9,22 @@ export type ParsedArgs = {
   resetHwid: boolean;
   deepClean: boolean;
   dryRun: boolean;
+  port?: number;
+  host?: string;
+  configDirs: string[];
+  multiPort: boolean;
 };
+
+function parseValue(arg: string, prefix: string, argv: string[], i: number): { value: string; nextIndex: number } {
+  if (arg.startsWith(`${prefix}=`)) {
+    return { value: arg.slice(prefix.length + 1), nextIndex: i };
+  }
+  const next = argv[i + 1];
+  if (next == null || next.startsWith("-")) {
+    throw new Error(`Missing value for ${prefix}`);
+  }
+  return { value: next, nextIndex: i + 1 };
+}
 
 export function parseArgs(argv: string[]): ParsedArgs {
   let tailscale = false;
@@ -22,6 +37,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let resetHwid = false;
   let deepClean = false;
   let dryRun = false;
+  let port: number | undefined;
+  let host: string | undefined;
+  const configDirs: string[] = [];
+  let multiPort = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -67,8 +86,38 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--multi-port") {
+      multiPort = true;
+      continue;
+    }
+
     if (arg === "--help" || arg === "-h") {
       help = true;
+      continue;
+    }
+
+    if (arg === "--port" || arg.startsWith("--port=")) {
+      const { value, nextIndex } = parseValue(arg, "--port", argv, i);
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0 || n > 65535) {
+        throw new Error(`Invalid --port value: ${value}`);
+      }
+      port = n;
+      i = nextIndex;
+      continue;
+    }
+
+    if (arg === "--host" || arg.startsWith("--host=")) {
+      const { value, nextIndex } = parseValue(arg, "--host", argv, i);
+      host = value;
+      i = nextIndex;
+      continue;
+    }
+
+    if (arg === "--config-dir" || arg.startsWith("--config-dir=")) {
+      const { value, nextIndex } = parseValue(arg, "--config-dir", argv, i);
+      configDirs.push(value);
+      i = nextIndex;
       continue;
     }
 
@@ -95,6 +144,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     resetHwid,
     deepClean,
     dryRun,
+    port,
+    host,
+    configDirs,
+    multiPort,
   };
 }
 
@@ -121,6 +174,10 @@ export function printHelp(version: string): void {
   );
   console.log("");
   console.log("Options:");
-  console.log("  --tailscale     Bind to 0.0.0.0 for tailnet/LAN access");
-  console.log("  -h, --help      Show this help message");
+  console.log("  --port <n>           Listen port (default 8765, env: CURSOR_BRIDGE_PORT)");
+  console.log("  --host <h>           Listen host (env: CURSOR_BRIDGE_HOST)");
+  console.log("  --config-dir <path>  Cursor config dir to use (repeat for account pool)");
+  console.log("  --multi-port         With multiple --config-dir, spawn one server per dir on port, port+1, …");
+  console.log("  --tailscale          Bind to 0.0.0.0 for tailnet/LAN access");
+  console.log("  -h, --help           Show this help message");
 }

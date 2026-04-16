@@ -9,6 +9,8 @@ import { spawn } from "node:child_process";
 import { debuglog } from "node:util";
 
 import { trackChildProcess } from "./process.js";
+import { keychainShimNodeOptions } from "./keychain-shim-inject.js";
+import type { AgentStreamEvent } from "./agent-stream-events.js";
 
 const debugAcp = debuglog("cursor-api-proxy:acp");
 
@@ -84,13 +86,15 @@ export function buildAcpSpawnEnv(
   }
   out.CURSOR_SKIP_KEYCHAIN = "1";
   out.CI = "true";
+  // Inject keychain shim so the agent's /usr/bin/security calls are intercepted
+  out.NODE_OPTIONS = keychainShimNodeOptions(out.NODE_OPTIONS);
   return out;
 }
 
 type AcpParsedMsg = {
   id?: number;
   method?: string;
-  params?: { update?: { sessionUpdate?: string; content?: { text?: string } } };
+  params?: Record<string, unknown>;
   result?: unknown;
   error?: { message?: string };
 };
@@ -106,6 +110,44 @@ function parseAcpStdoutLine(line: string): AcpParsedMsg | null {
   }
 }
 
+type AcpUpdate = {
+  sessionUpdate?: string;
+  content?:
+    | { text?: string }
+    | Array<{ content?: { text?: string }; text?: string }>;
+  toolCallId?: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  locations?: unknown;
+};
+
+function extractUpdateText(content: AcpUpdate["content"]): string {
+  if (!content) return "";
+  if (!Array.isArray(content) && typeof content === "object") {
+    const t = (content as { text?: string }).text;
+    return typeof t === "string" ? t : "";
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => c?.content?.text ?? c?.text ?? "")
+      .filter((t) => typeof t === "string")
+      .join("");
+  }
+  return "";
+}
+
+function toolEventFromUpdate(update: AcpUpdate): AgentStreamEvent | null {
+  const id = update.toolCallId;
+  if (!id) return null;
+  const name = update.title ?? update.kind ?? "tool";
+  const input: Record<string, unknown> = {};
+  if (update.kind) input.kind = update.kind;
+  if (update.status) input.status = update.status;
+  if (update.locations !== undefined) input.locations = update.locations;
+  return { kind: "tool_use", id, name, input };
+}
+
 /**
  * Handle ACP server→client notifications (session/update chunks, permissions, cursor/*).
  * Returns true if the message was consumed as a notification.
@@ -115,49 +157,35 @@ function handleAcpNotification(
   opts: {
     rawDebug?: boolean;
     stdin: NodeJS.WritableStream | null | undefined;
-    onAgentTextChunk?: (text: string) => void;
+    onEvent?: (event: AgentStreamEvent) => void;
+    seenToolIds?: Set<string>;
   },
 ): boolean {
   if (msg.method === "session/update") {
-    const update = (msg.params?.update ?? msg.params) as {
-      sessionUpdate?: string;
-      content?: { text?: string } | Array<{ content?: { text?: string }; text?: string }>;
-    } | undefined;
-    const content = update?.content;
-    const text =
-      typeof content === "object" && content !== null && !Array.isArray(content) && typeof (content as { text?: string }).text === "string"
-        ? (content as { text: string }).text
-        : Array.isArray(content)
-          ? content
-              .map((c: { content?: { text?: string }; text?: string }) =>
-                typeof c?.content?.text === "string"
-                  ? c.content.text
-                  : typeof c?.text === "string"
-                    ? c.text
-                    : "",
-              )
-              .join("")
-          : "";
+    const params = msg.params as { update?: AcpUpdate } | AcpUpdate | undefined;
+    const update = (params && "update" in (params as Record<string, unknown>)
+      ? (params as { update?: AcpUpdate }).update
+      : (params as AcpUpdate | undefined)) as AcpUpdate | undefined;
     const sessionUpdate = update?.sessionUpdate;
-    if (
-      (sessionUpdate === "agent_message_chunk" || sessionUpdate === "agent_thought_chunk") &&
-      text
-    ) {
-      opts.onAgentTextChunk?.(text);
-    } else if (
-      sessionUpdate &&
-      sessionUpdate !== "agent_thought_chunk" &&
-      sessionUpdate !== "available_commands_update" &&
-      sessionUpdate !== "tool_call" &&
-      sessionUpdate !== "tool_call_update"
-    ) {
+
+    if (sessionUpdate === "agent_message_chunk") {
+      const text = extractUpdateText(update?.content);
+      if (text) opts.onEvent?.({ kind: "text", text });
+    } else if (sessionUpdate === "agent_thought_chunk") {
+      const text = extractUpdateText(update?.content);
+      if (text) opts.onEvent?.({ kind: "thinking", text });
+    } else if (sessionUpdate === "tool_call" && update) {
+      const ev = toolEventFromUpdate(update);
+      if (ev && ev.kind === "tool_use") {
+        if (!opts.seenToolIds?.has(ev.id)) {
+          opts.seenToolIds?.add(ev.id);
+          opts.onEvent?.(ev);
+        }
+      }
+    } else if (sessionUpdate && sessionUpdate !== "tool_call_update" && sessionUpdate !== "available_commands_update") {
       debugAcp(
         "session/update (unhandled): %s",
-        JSON.stringify({
-          sessionUpdate,
-          hasContent: !!content,
-          contentKeys: content && typeof content === "object" && !Array.isArray(content) ? Object.keys(content) : [],
-        }),
+        JSON.stringify({ sessionUpdate }),
       );
     }
     return true;
@@ -345,6 +373,7 @@ export function runAcpSync(
       number,
       { resolve: (value: unknown) => void; reject: (err: Error) => void; timerId?: ReturnType<typeof setTimeout> }
     >();
+    const seenToolIds = new Set<string>();
 
     const rl = readline.createInterface({ input: child.stdout! });
     rl.on("line", (line: string) => {
@@ -372,8 +401,11 @@ export function runAcpSync(
         handleAcpNotification(msg, {
           rawDebug: opts.rawDebug,
           stdin: child.stdin,
-          onAgentTextChunk: (text) => {
-            accumulated += text;
+          seenToolIds,
+          onEvent: (event) => {
+            if (event.kind === "text" || event.kind === "thinking") {
+              accumulated += event.text;
+            }
           },
         });
       } catch {
@@ -489,7 +521,7 @@ export function runAcpStream(
   args: string[],
   prompt: string,
   opts: AcpRunOptions,
-  onChunk: (text: string) => void,
+  onEvent: (event: AgentStreamEvent) => void,
 ): Promise<AcpStreamResult> {
   const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
@@ -550,6 +582,7 @@ export function runAcpStream(
       number,
       { resolve: (value: unknown) => void; reject: (err: Error) => void; timerId?: ReturnType<typeof setTimeout> }
     >();
+    const seenToolIds = new Set<string>();
 
     const rl = readline.createInterface({ input: child.stdout! });
     rl.on("line", (line: string) => {
@@ -577,7 +610,8 @@ export function runAcpStream(
         handleAcpNotification(msg, {
           rawDebug: opts.rawDebug,
           stdin: child.stdin,
-          onAgentTextChunk: onChunk,
+          seenToolIds,
+          onEvent,
         });
       } catch {
         /* ignore notification handler errors */

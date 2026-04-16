@@ -4,7 +4,6 @@ import * as http from "node:http";
 import type { BridgeConfig } from "../config.js";
 import { buildAgentFixedArgs } from "../agent-cmd-args.js";
 import { runAgentStream, runAgentSync } from "../agent-runner.js";
-import { createStreamParser } from "../cli-stream-parser.js";
 import { json, writeSseHeaders } from "../http.js";
 import { resolveToCursorModel } from "../model-map.js";
 import {
@@ -157,139 +156,24 @@ export async function handleChatCompletions(
       /* client disconnected mid-stream */
     });
 
-    if (config.useAcp && typeof promptForAgent === "string") {
-      let accumulated = "";
-      runAgentStream(
-        config,
-        workspaceDir,
-        cmdArgs,
-        (chunk) => {
-          accumulated += chunk;
-          res.write(
-            `data: ${JSON.stringify({
-              id,
-              object: "chat.completion.chunk",
-              created,
-              model: displayModel,
-              choices: [
-                { index: 0, delta: { content: chunk }, finish_reason: null },
-              ],
-            })}\n\n`,
-          );
-        },
-        tempDir,
-        promptForAgent,
-        configDir,
-        abortController.signal,
-      )
-        .then(({ code, stderr: stderrOut }) => {
-          const latencyMs = Date.now() - streamStart;
-          reportRequestEnd(configDir);
-
-          if (stderrOut && isRateLimited(stderrOut)) {
-            reportRateLimit(configDir, 60000);
-          }
-
-          if (abortController.signal.aborted) {
-            /* client disconnected — do not count as success or failure */
-          } else if (code !== 0) {
-            reportRequestError(configDir, latencyMs);
-            const publicMsg = logAgentError(
-              config.sessionsLogPath,
-              method,
-              pathname,
-              remoteAddress,
-              code,
-              stderrOut,
-            );
-            res.write(
-              `data: ${JSON.stringify({
-                error: { message: publicMsg, code: "cursor_cli_error" },
-              })}\n\n`,
-            );
-            res.write("data: [DONE]\n\n");
-            logAccountStats(config.verbose, getAccountStats());
-            res.end();
-            return;
-          } else {
-            reportRequestSuccess(configDir, latencyMs);
-          }
-          logAccountStats(config.verbose, getAccountStats());
-          logTrafficResponse(
-            config.verbose,
-            model ?? cursorModel,
-            accumulated,
-            true,
-          );
-          const promptTokens = Math.max(1, Math.round(prompt.length / 4));
-          const completionTokens = Math.max(
-            1,
-            Math.round(accumulated.length / 4),
-          );
-          res.write(
-            `data: ${JSON.stringify({
-              id,
-              object: "chat.completion.chunk",
-              created,
-              model: displayModel,
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-              usage: {
-                prompt_tokens: promptTokens,
-                completion_tokens: completionTokens,
-                total_tokens: promptTokens + completionTokens,
-              },
-            })}\n\n`,
-          );
-          res.write("data: [DONE]\n\n");
-          res.end();
-        })
-        .catch((err) => {
-          reportRequestEnd(configDir);
-          if (!abortController.signal.aborted) {
-            reportRequestError(configDir, Date.now() - streamStart);
-            res.write(
-              `data: ${JSON.stringify({
-                error: {
-                  message:
-                    "The Cursor agent stream failed. See server logs for details.",
-                  code: "cursor_cli_error",
-                },
-              })}\n\n`,
-            );
-            res.write("data: [DONE]\n\n");
-          }
-          console.error(
-            `[${new Date().toISOString()}] Agent stream error:`,
-            err,
-          );
-          res.end();
-        });
-      return;
-    }
-
     let accumulated = "";
-    const parseLine = createStreamParser(
-      (text) => {
-        accumulated += text;
-        res.write(
-          `data: ${JSON.stringify({
-            id,
-            object: "chat.completion.chunk",
-            created,
-            model: displayModel,
-            choices: [
-              { index: 0, delta: { content: text }, finish_reason: null },
-            ],
-          })}\n\n`,
-        );
-      },
-      () => {
-        logTrafficResponse(
-          config.verbose,
-          model ?? cursorModel,
-          accumulated,
-          true,
-        );
+
+    const writeDelta = (text: string) => {
+      res.write(
+        `data: ${JSON.stringify({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model: displayModel,
+          choices: [
+            { index: 0, delta: { content: text }, finish_reason: null },
+          ],
+        })}\n\n`,
+      );
+    };
+
+    const writeDone = (completedOk: boolean) => {
+      if (completedOk) {
         const promptTokens = Math.max(1, Math.round(prompt.length / 4));
         const completionTokens = Math.max(
           1,
@@ -309,15 +193,25 @@ export async function handleChatCompletions(
             },
           })}\n\n`,
         );
-        res.write("data: [DONE]\n\n");
-      },
-    );
+      }
+      res.write("data: [DONE]\n\n");
+    };
 
     runAgentStream(
       config,
       workspaceDir,
       cmdArgs,
-      parseLine,
+      {
+        onEvent: (event) => {
+          // OpenAI clients don't distinguish thinking from output; surface both as
+          // content deltas so the caller sees progress. Tool events are dropped
+          // (this proxy doesn't synthesize OpenAI tool_calls yet).
+          if (event.kind === "text" || event.kind === "thinking") {
+            accumulated += event.text;
+            writeDelta(event.text);
+          }
+        },
+      },
       tempDir,
       promptForAgent,
       configDir,
@@ -335,7 +229,7 @@ export async function handleChatCompletions(
           /* client disconnected — do not count as success or failure */
         } else if (code !== 0) {
           reportRequestError(configDir, latencyMs);
-          logAgentError(
+          const publicMsg = logAgentError(
             config.sessionsLogPath,
             method,
             pathname,
@@ -343,8 +237,21 @@ export async function handleChatCompletions(
             code,
             stderrOut,
           );
+          res.write(
+            `data: ${JSON.stringify({
+              error: { message: publicMsg, code: "cursor_cli_error" },
+            })}\n\n`,
+          );
+          writeDone(false);
         } else {
           reportRequestSuccess(configDir, latencyMs);
+          logTrafficResponse(
+            config.verbose,
+            model ?? cursorModel,
+            accumulated,
+            true,
+          );
+          writeDone(true);
         }
         logAccountStats(config.verbose, getAccountStats());
         res.end();
@@ -353,6 +260,16 @@ export async function handleChatCompletions(
         reportRequestEnd(configDir);
         if (!abortController.signal.aborted) {
           reportRequestError(configDir, Date.now() - streamStart);
+          res.write(
+            `data: ${JSON.stringify({
+              error: {
+                message:
+                  "The Cursor agent stream failed. See server logs for details.",
+                code: "cursor_cli_error",
+              },
+            })}\n\n`,
+          );
+          writeDone(false);
         }
         console.error(
           `[${new Date().toISOString()}] Agent stream error:`,
