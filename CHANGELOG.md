@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] — 2026-04-18
+
+### Added
+- **Skill translation (Path D)** — The Anthropic Agent SDK's `Skill` tool can't be dispatched to cursor-agent (it has its own hardcoded tool loop). The proxy now materialises bundled Anthropic skills — `init`, `review`, `simplify`, `security-review` — as `.cursor/rules/<name>.mdc` files inside the resolved workspace on each request. cursor-agent auto-discovers the rules, so `/simplify`, `/security-review`, etc. behave the same for proxied fast models (composer-2-fast) as for direct Anthropic endpoints. If the request advertises a `Skill` tool with an enum of names, only those names are materialised; otherwise every bundled skill is written. Existing `.mdc` files are left untouched — caller-authored rules take precedence.
+- **Cursor tool_call → Anthropic tool_use translation** — `cli-stream-parser.ts` now recognises cursor-agent's `type:"tool_call"`, `subtype:"started"` events and surfaces them as Anthropic `tool_use` content blocks. Includes `readToolCall`, `editToolCall`, `writeToolCall`, `globToolCall`, `grepToolCall`, `shellToolCall`, `taskToolCall` (parallel sub-agents), `webFetchToolCall`, `webSearchToolCall`, and more. SDK consumers now see turn-by-turn tool activity from proxied fast models the same as a direct run — progress UI, budget tracking, nudge-on-silence all work. Unknown tool kinds fall back to stripping the `ToolCall` suffix.
+
+### Changed
+- **`toolsToSystemText` drops non-executable SDK tools** — `Skill`, `Task`, `Agent`, `EnterPlanMode`/`ExitPlanMode`, and the `Task*`/`TodoWrite`/`ScheduleWakeup` family are no longer serialised into the system prompt text. They either get translated elsewhere (Skill → rules, Task → cursor's native `taskToolCall`) or are harness-only bookkeeping — advertising them as JSON schemas to cursor-agent was pure noise.
+
 ## [0.9.3] — 2026-04-17
 
 ### Fixed

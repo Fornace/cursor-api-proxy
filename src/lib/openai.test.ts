@@ -179,4 +179,29 @@ describe("toolsToSystemText", () => {
     expect(result).toContain("foo");
     expect(result).toContain("bar");
   });
+
+  it("drops SDK tools cursor-agent can't execute (Skill/Task/Agent/plan)", () => {
+    const tools = [
+      { type: "function", function: { name: "Skill", description: "Invoke a skill" } },
+      { type: "function", function: { name: "Task", description: "Spawn sub-agent" } },
+      { type: "function", function: { name: "Agent", description: "Generic sub-agent" } },
+      { type: "function", function: { name: "EnterPlanMode", description: "Plan" } },
+      { type: "function", function: { name: "Bash", description: "Run a shell command" } },
+    ];
+    const result = toolsToSystemText(tools);
+    expect(result).toBeDefined();
+    expect(result).not.toContain("Skill");
+    expect(result).not.toContain("Task");
+    expect(result).not.toContain("Agent");
+    expect(result).not.toContain("EnterPlanMode");
+    expect(result).toContain("Bash");
+  });
+
+  it("returns undefined when every tool is filtered out", () => {
+    const tools = [
+      { type: "function", function: { name: "Skill" } },
+      { type: "function", function: { name: "Task" } },
+    ];
+    expect(toolsToSystemText(tools)).toBeUndefined();
+  });
 });

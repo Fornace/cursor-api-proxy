@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createStreamParser } from "./cli-stream-parser.js";
+import { createStreamParser, mapCursorToolName } from "./cli-stream-parser.js";
 import type { AgentStreamEvent } from "./agent-stream-events.js";
 
 function collector() {
@@ -147,6 +147,80 @@ describe("createStreamParser", () => {
 
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(c.events).toEqual([]);
+  });
+
+  it("translates cursor tool_call:started → tool_use", () => {
+    const c = collector();
+    const parse = createStreamParser(c.on, () => {});
+
+    parse(
+      JSON.stringify({
+        type: "tool_call",
+        subtype: "started",
+        call_id: "tool_abc",
+        tool_call: {
+          readToolCall: { args: { path: "/tmp/messy.ts" } },
+        },
+      }),
+    );
+    parse(
+      JSON.stringify({
+        type: "tool_call",
+        subtype: "started",
+        call_id: "tool_def",
+        tool_call: {
+          taskToolCall: {
+            args: {
+              description: "Count lines",
+              prompt: "Read /tmp/messy.ts and count lines",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(c.events).toEqual([
+      {
+        kind: "tool_use",
+        id: "tool_abc",
+        name: "Read",
+        input: { path: "/tmp/messy.ts" },
+      },
+      {
+        kind: "tool_use",
+        id: "tool_def",
+        name: "Task",
+        input: {
+          description: "Count lines",
+          prompt: "Read /tmp/messy.ts and count lines",
+        },
+      },
+    ]);
+  });
+
+  it("deduplicates tool_call emissions across started + completed", () => {
+    const c = collector();
+    const parse = createStreamParser(c.on, () => {});
+
+    const started = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "tool_xyz",
+      tool_call: { editToolCall: { args: { path: "x.ts" } } },
+    };
+    parse(JSON.stringify(started));
+    parse(JSON.stringify({ ...started, subtype: "completed" }));
+
+    expect(c.events).toEqual([
+      { kind: "tool_use", id: "tool_xyz", name: "Edit", input: { path: "x.ts" } },
+    ]);
+  });
+
+  it("maps unknown cursor tool kinds by stripping ToolCall suffix", () => {
+    expect(mapCursorToolName("readToolCall")).toBe("Read");
+    expect(mapCursorToolName("shellToolCall")).toBe("Bash");
+    expect(mapCursorToolName("taskToolCall")).toBe("Task");
+    expect(mapCursorToolName("brandNewToolCall")).toBe("BrandNew");
   });
 
   it("ignores non-JSON and malformed lines", () => {

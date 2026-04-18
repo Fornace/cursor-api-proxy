@@ -51,9 +51,39 @@ function messageContentToText(content: any): string {
 }
 
 /**
+ * Tools exposed by the Anthropic Agent SDK that cursor-agent cannot execute
+ * directly — they'd sit in the system prompt as confusing dead weight.
+ *
+ * - `Skill` is materialised as `.cursor/rules/*.mdc` (Path D from
+ *   docs/PROXIED_FAST_MODEL_RESEARCH.md) so cursor-agent follows skill bodies
+ *   natively rather than emitting a Skill tool_use the host would never see.
+ * - `Task` / `Agent` / `ExitPlanMode` / `EnterPlanMode` are handled by
+ *   cursor-agent's own internal tool loop (`taskToolCall` etc.). Advertising
+ *   the SDK schema to the model on top of that is pure noise.
+ * - `TaskCreate` / `TaskUpdate` / `TaskList` / `TodoWrite` are harness-level
+ *   bookkeeping tools without a cursor equivalent.
+ */
+const NON_EXECUTABLE_SDK_TOOLS = new Set([
+  "Skill",
+  "Task",
+  "Agent",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskList",
+  "TaskGet",
+  "TaskOutput",
+  "TaskStop",
+  "TodoWrite",
+  "ScheduleWakeup",
+]);
+
+/**
  * Serialise tool/function schemas into a text block for the system prompt.
- * This allows the model to be aware of available tools even though we can't
- * return tool_call deltas natively.
+ * Drops SDK-provided tools that cursor-agent can't honour (Skill/Task/etc.) —
+ * those either get translated elsewhere (Skill → `.cursor/rules/`) or are
+ * already served by cursor-agent's native tool loop.
  */
 export function toolsToSystemText(
   tools?: any[],
@@ -64,11 +94,17 @@ export function toolsToSystemText(
   if (tools && tools.length > 0) {
     for (const t of tools) {
       const fn = t?.type === "function" ? t.function : t;
-      if (fn) defs.push(fn);
+      if (!fn?.name) continue;
+      if (NON_EXECUTABLE_SDK_TOOLS.has(fn.name)) continue;
+      defs.push(fn);
     }
   }
   if (functions && functions.length > 0) {
-    defs.push(...functions);
+    for (const fn of functions) {
+      if (!fn?.name) continue;
+      if (NON_EXECUTABLE_SDK_TOOLS.has(fn.name)) continue;
+      defs.push(fn);
+    }
   }
 
   if (defs.length === 0) return undefined;

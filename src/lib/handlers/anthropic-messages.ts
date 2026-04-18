@@ -22,6 +22,10 @@ import { resolveModel } from "../resolve-model.js";
 import { resolveWorkspace } from "../workspace.js";
 import { sanitizeMessages, sanitizeSystem } from "../sanitize.js";
 import {
+  extractAdvertisedSkillNames,
+  materializeBundledSkills,
+} from "../skill-materializer.js";
+import {
   getNextAccountConfigDir,
   reportRequestStart,
   reportRequestEnd,
@@ -157,6 +161,18 @@ export async function handleAnthropicMessages(
       error: { type: "invalid_request_error", message: msg },
     });
     return;
+  }
+
+  // Path D (PROXIED_FAST_MODEL_RESEARCH.md): cursor-agent can't invoke the
+  // SDK-provided Skill tool, so materialise bundled Anthropic skills as
+  // `.cursor/rules/<name>.mdc` in the workspace. cursor-agent auto-discovers
+  // them and applies them verbatim for `/<name>` invocations.
+  const advertised = extractAdvertisedSkillNames((body as any).tools);
+  const materialized = materializeBundledSkills(workspaceDir, advertised);
+  if (materialized.length > 0 && config.verbose) {
+    console.log(
+      `[${new Date().toISOString()}] Materialised ${materialized.length} skill(s) as .cursor/rules: ${materialized.join(", ")}`,
+    );
   }
 
   const fixedArgs = buildAgentFixedArgs(

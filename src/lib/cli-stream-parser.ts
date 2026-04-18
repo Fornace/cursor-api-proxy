@@ -7,6 +7,10 @@ import type { AgentStreamEvent } from "./agent-stream-events.js";
  * - `{ type: "assistant", message: { content: [{type:"text", text}, {type:"thinking", thinking}, {type:"tool_use", id, name, input}] } }`
  *   The `message.content` array is cumulative — each line contains the full message so far.
  *   We diff against what we've already emitted so consumers see clean deltas.
+ * - `{ type: "tool_call", subtype: "started"|"completed", call_id, tool_call: { <kind>ToolCall: { args, result? } } }`
+ *   cursor-agent's native tool events. We translate them to Anthropic `tool_use`
+ *   blocks so SDK consumers (claude-overnight progress UI, budget tracking,
+ *   nudge-on-silence) see tool activity the same way as a direct Anthropic run.
  * - `{ type: "result", subtype: "success" }` — terminates the stream.
  *
  * Unknown types are ignored (non-JSON lines too) so future cursor CLI updates don't crash.
@@ -20,12 +24,20 @@ export function createStreamParser(
   const seenToolIds = new Set<string>();
   let done = false;
 
+  const emitToolUse = (id: string, name: string, input: unknown) => {
+    if (seenToolIds.has(id)) return;
+    seenToolIds.add(id);
+    onEvent({ kind: "tool_use", id, name, input });
+  };
+
   return (line: string) => {
     if (done) return;
     try {
       const obj = JSON.parse(line) as {
         type?: string;
         subtype?: string;
+        call_id?: string;
+        tool_call?: Record<string, { args?: unknown }>;
         message?: {
           content?: Array<{
             type?: string;
@@ -56,16 +68,26 @@ export function createStreamParser(
               if (delta) onEvent({ kind: "thinking", text: delta });
             }
           } else if (part.type === "tool_use" && part.id && part.name) {
-            if (!seenToolIds.has(part.id)) {
-              seenToolIds.add(part.id);
-              onEvent({
-                kind: "tool_use",
-                id: part.id,
-                name: part.name,
-                input: part.input ?? {},
-              });
-            }
+            emitToolUse(part.id, part.name, part.input ?? {});
           }
+        }
+      }
+
+      if (
+        obj.type === "tool_call" &&
+        obj.subtype === "started" &&
+        obj.call_id &&
+        obj.tool_call
+      ) {
+        const entry = Object.entries(obj.tool_call)[0];
+        if (entry) {
+          const [rawKind, body] = entry;
+          const name = mapCursorToolName(rawKind);
+          const input =
+            body && typeof body === "object" && "args" in body
+              ? ((body as { args?: unknown }).args ?? {})
+              : {};
+          emitToolUse(obj.call_id, name, input);
         }
       }
 
@@ -77,6 +99,37 @@ export function createStreamParser(
       /* ignore parse errors for non-JSON lines */
     }
   };
+}
+
+/**
+ * Map cursor-agent's camelCase tool kind (e.g. `readToolCall`) to its
+ * Anthropic-standard name (`Read`). Unknown kinds fall back to stripping the
+ * `ToolCall` suffix and capitalising, which keeps future cursor tools
+ * surfacing with a reasonable name rather than being dropped on the floor.
+ */
+export function mapCursorToolName(rawKind: string): string {
+  const table: Record<string, string> = {
+    readToolCall: "Read",
+    editToolCall: "Edit",
+    writeToolCall: "Write",
+    multiEditToolCall: "MultiEdit",
+    globToolCall: "Glob",
+    grepToolCall: "Grep",
+    shellToolCall: "Bash",
+    runTerminalToolCall: "Bash",
+    terminalToolCall: "Bash",
+    taskToolCall: "Task",
+    webFetchToolCall: "WebFetch",
+    webSearchToolCall: "WebSearch",
+    readLintsToolCall: "ReadLints",
+    lsToolCall: "LS",
+    todoWriteToolCall: "TodoWrite",
+    notebookEditToolCall: "NotebookEdit",
+  };
+  if (rawKind in table) return table[rawKind];
+  const stripped = rawKind.replace(/ToolCall$/, "");
+  if (!stripped) return rawKind;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
 /**
