@@ -219,7 +219,11 @@ export async function handleAnthropicMessages(
     const writeEvent = (evt: object) => {
       if (!res.writable) return;
       try {
-        res.write(`data: ${JSON.stringify(evt)}\n\n`);
+        // Anthropic SSE requires `event: <name>` — the SDK's parser
+        // dispatches on the SSE event field, not on the JSON `type`.
+        // Without this, SDK consumers silently drop every frame.
+        const type = (evt as { type?: string }).type ?? "message";
+        res.write(`event: ${type}\ndata: ${JSON.stringify(evt)}\n\n`);
       } catch {
         /* socket closed, ignore */
       }

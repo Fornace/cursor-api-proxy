@@ -10,6 +10,7 @@ import { handleChatCompletions } from "./handlers/chat-completions.js";
 import { handleAnthropicMessages } from "./handlers/anthropic-messages.js";
 import { extractBearerToken, json, readBody } from "./http.js";
 import { appendSessionLine, logIncoming } from "./request-log.js";
+import { InboundRateLimiter } from "./rate-limiter.js";
 
 export type BridgeServerOptions = {
   version: string;
@@ -20,6 +21,16 @@ export function createRequestListener(opts: BridgeServerOptions) {
   const { config } = opts;
   const modelCacheRef: { current?: ModelCache } = { current: undefined };
   const lastRequestedModelRef: { current?: string } = {};
+  const rateLimiter = new InboundRateLimiter({
+    maxRequests: config.rateLimitMaxRequests,
+    windowMs: config.rateLimitWindowMs,
+  });
+
+  const rateLimitEndpoints = new Set([
+    "/v1/chat/completions",
+    "/v1/messages",
+    "/v1/models",
+  ]);
 
   return async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const protocol = config.tlsCertPath && config.tlsKeyPath ? "https" : "http";
@@ -54,6 +65,17 @@ export function createRequestListener(opts: BridgeServerOptions) {
           json(res, 401, {
             error: { message: "Invalid API key", code: "unauthorized" },
           });
+          return;
+        }
+      }
+
+      // Rate limit check for expensive endpoints
+      if (rateLimitEndpoints.has(pathname)) {
+        if (!rateLimiter.check(remoteAddress)) {
+          const retryAfter = Math.ceil(rateLimiter.retryAfterMs(remoteAddress) / 1000);
+          json(res, 429, {
+            error: { message: "Rate limit exceeded", code: "rate_limited" },
+          }, { "Retry-After": String(retryAfter) });
           return;
         }
       }

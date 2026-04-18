@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2] — 2026-04-18
+
+### Fixed
+- **Anthropic SSE `event:` lines** — `/v1/messages` streaming responses now prefix every SSE frame with `event: <type>` matching the JSON payload's `type` field. Previously the proxy wrote only `data: {...}\n\n`, so the Anthropic SDK's SSE parser — which dispatches on the SSE event field, not the JSON `type` — silently dropped every frame. Symptom: proxied agents consumed through `@anthropic-ai/claude-agent-sdk`'s `query()` with `includePartialMessages: true` saw zero `stream_event` messages, and the final `assistant` message had `tool_use` blocks stripped entirely. claude-overnight's UI showed no tool activity for the full run even though cursor-agent was invoking tools internally. The raw SSE wire format was correct content-wise, just missing the event line the SDK requires.
+
+### Added
+- **Inbound rate limiter** on expensive endpoints (`/v1/chat/completions`, `/v1/messages`, `/v1/models`) — sliding-window per-IP limit configurable via `CURSOR_BRIDGE_RATE_LIMIT_MAX` (0 disables, default 0) and `CURSOR_BRIDGE_RATE_LIMIT_WINDOW_MS` (default 60_000). Returns 429 with `Retry-After` header when exceeded. Protects against runaway clients; claude-overnight sets it to 20 req/min per agent by default.
+
+## [0.10.1] — 2026-04-18
+
+### Fixed
+- **composer-2 streaming runs no longer hang for 300s** — the 0.10.0 skill materialiser dumped four large bundled rule files (`init`, `review`, `simplify`, `security-review`) into every workspace's `.cursor/rules/` whenever the caller didn't advertise a `Skill` tool. Slower models like composer-2 pulled those rule descriptions into context on unrelated prompts and spun through 40+ tool turns before hitting the per-process timeout. Fixes:
+  - `materializeBundledSkills` now writes **nothing** when no Skill tool is advertised (or the advertised list is empty). Only explicitly advertised skills get materialised.
+  - Rendered `.mdc` frontmatter now uses a narrow trigger description — `"Apply only when the user requests /<skill-name>"` — instead of the full skill summary, so cursor-agent only applies the rule on explicit slash-command invocation instead of fuzzy-matching against free-text prompts.
+
 ## [0.10.0] — 2026-04-18
 
 ### Added

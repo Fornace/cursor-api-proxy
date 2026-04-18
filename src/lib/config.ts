@@ -49,6 +49,10 @@ export type BridgeConfig = {
   multiPort: boolean;
   /** Windows CreateProcess command-line budget for prompt truncation (ignored on non-Windows). */
   winCmdlineMax: number;
+  /** Max inbound requests per IP within the window. 0 = disabled. */
+  rateLimitMaxRequests: number;
+  /** Sliding window duration in milliseconds for rate limiting. */
+  rateLimitWindowMs: number;
 };
 
 export function loadBridgeConfig(opts: EnvOptions = {}): BridgeConfig {
@@ -109,5 +113,7 @@ export function loadBridgeConfig(opts: EnvOptions = {}): BridgeConfig {
     configDirs: env.configDirs ?? [],
     multiPort: env.multiPort,
     winCmdlineMax: env.winCmdlineMax,
+    rateLimitMaxRequests: env.rateLimitMaxRequests,
+    rateLimitWindowMs: env.rateLimitWindowMs,
   };
 }

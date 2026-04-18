@@ -46,6 +46,10 @@ export type LoadedEnv = {
    * On win32 the proxy truncates the prompt tail to stay under this budget.
    */
   winCmdlineMax: number;
+  /** Max inbound requests per IP within the rate-limit window. 0 = disabled. */
+  rateLimitMaxRequests: number;
+  /** Sliding window duration in milliseconds for inbound rate limiting. */
+  rateLimitWindowMs: number;
 };
 
 export type AgentCommand = {
@@ -284,6 +288,8 @@ export function loadEnvConfig(opts: EnvOptions = {}): LoadedEnv {
     configDirs,
     multiPort: envBool(env, ["CURSOR_BRIDGE_MULTI_PORT"], false),
     winCmdlineMax,
+    rateLimitMaxRequests: envNumber(env, ["CURSOR_BRIDGE_RATE_LIMIT_MAX"], 0),
+    rateLimitWindowMs: envNumber(env, ["CURSOR_BRIDGE_RATE_LIMIT_WINDOW_MS"], 60000),
   };
 }
 

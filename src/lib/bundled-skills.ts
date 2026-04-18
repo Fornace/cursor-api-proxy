@@ -318,12 +318,18 @@ export const BUNDLED_SKILLS: Record<string, BundledSkill> = {
 
 /**
  * Render a BundledSkill to the `.cursor/rules/<name>.mdc` on-disk format.
- * `alwaysApply: false` — cursor-agent selects the rule based on the
- * description when the user (or caller) invokes `/<skill-name>`.
+ *
+ * The description is deliberately narrow: "Apply only when the user requests
+ * /<skill-name>". Previously we shipped the full skill summary as the
+ * description, which cursor-agent treated as a free-text trigger — slower
+ * models (composer-2) then pulled the full rule body into context on
+ * unrelated prompts and spun through 40+ tool turns before hitting the 300s
+ * process timeout. Narrow description + `alwaysApply: false` keeps the rule
+ * dormant unless the user literally invokes the slash command.
  */
 export function renderSkillAsMdc(skill: BundledSkill): string {
   return `---
-description: ${skill.description.replace(/\r?\n/g, " ").trim()}
+description: Apply only when the user requests /${skill.name}
 alwaysApply: false
 ---
 

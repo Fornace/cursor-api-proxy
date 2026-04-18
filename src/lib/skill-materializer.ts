@@ -48,11 +48,11 @@ export function extractAdvertisedSkillNames(
  * advertising as `.cursor/rules/<name>.mdc` inside the resolved workspace, so
  * cursor-agent discovers them and follows them for `/<name>` invocations.
  *
- * - If `advertised` is `undefined`, no Skill tool was present — fall back to
- *   materialising every bundled skill so calls like `/simplify` still work
- *   when consumers don't wire up the Skill tool explicitly.
- * - If `advertised` is the empty array, the caller opted out of skills — write
- *   nothing.
+ * Only skills the caller explicitly advertised (via the `Skill` tool enum) get
+ * written. If no Skill tool is present or the enum is empty we stay out of the
+ * workspace entirely — silently dumping four large rule files into every
+ * request's `.cursor/rules/` was confusing slower models like composer-2 into
+ * 40-turn tool loops on simple prompts.
  *
  * Existing `.mdc` files are not overwritten; callers managing their own rules
  * take precedence.
@@ -61,10 +61,8 @@ export function materializeBundledSkills(
   workspaceDir: string,
   advertised: string[] | undefined,
 ): string[] {
-  const names =
-    advertised === undefined
-      ? Object.keys(BUNDLED_SKILLS)
-      : advertised.filter((n) => n in BUNDLED_SKILLS);
+  if (!advertised || advertised.length === 0) return [];
+  const names = advertised.filter((n) => n in BUNDLED_SKILLS);
   if (names.length === 0) return [];
 
   const rulesDir = path.join(workspaceDir, ".cursor", "rules");

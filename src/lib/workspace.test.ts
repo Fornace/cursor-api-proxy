@@ -31,6 +31,8 @@ function baseConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
     configDirs: [],
     multiPort: false,
     winCmdlineMax: 30_000,
+    rateLimitMaxRequests: 0,
+    rateLimitWindowMs: 60_000,
     ...overrides,
   };
 }

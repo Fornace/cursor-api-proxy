@@ -77,7 +77,9 @@ describe("materializeBundledSkills", () => {
       path.join(dir, ".cursor", "rules", "simplify.mdc"),
       "utf8",
     );
-    expect(simplify).toMatch(/^---\ndescription: /);
+    expect(simplify).toMatch(
+      /^---\ndescription: Apply only when the user requests \/simplify\n/,
+    );
     expect(simplify).toMatch(/alwaysApply: false/);
     expect(simplify).toContain("# Simplify: Code Review and Cleanup");
   });
@@ -90,14 +92,10 @@ describe("materializeBundledSkills", () => {
     ).toBe(false);
   });
 
-  it("materialises every bundled skill when advertised is undefined", () => {
+  it("writes nothing when advertised is undefined (caller didn't opt in)", () => {
     const written = materializeBundledSkills(dir, undefined);
-    expect(written.sort()).toEqual([
-      "init",
-      "review",
-      "security-review",
-      "simplify",
-    ]);
+    expect(written).toEqual([]);
+    expect(fs.existsSync(path.join(dir, ".cursor", "rules"))).toBe(false);
   });
 
   it("writes nothing when the advertised list is empty", () => {

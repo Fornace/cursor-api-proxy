@@ -167,6 +167,11 @@ function startSingleServer(
     console.log(
       `- Windows cmdline budget: ${config.winCmdlineMax} (prompt tail truncation when over limit; Windows only)`,
     );
+    if (config.rateLimitMaxRequests > 0) {
+      console.log(
+        `- rate limit: ${config.rateLimitMaxRequests} req / ${config.rateLimitWindowMs / 1000}s per IP`,
+      );
+    }
     if (config.configDirs && config.configDirs.length > 0) {
       console.log(
         `- account pool: enabled with ${config.configDirs.length} configuration directories`,
