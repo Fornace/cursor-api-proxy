@@ -1,7 +1,7 @@
 {
   "name": "cursor-composer-in-claude",
   "version": "0.10.2",
-  "description": "OpenAI-compatible proxy for Cursor CLI — forked with macOS keychain skip and system Node.js support",
+  "description": "OpenAI- and Anthropic-compatible proxy for the Cursor agent CLI. Use Cursor models from any LLM client, with multi-account rotation, streaming, and an auto-starting SDK.",
   "type": "module",
   "files": [
     "dist",
@@ -34,10 +34,13 @@
   "keywords": [
     "cursor",
     "openai",
+    "anthropic",
     "proxy",
     "llm",
     "api",
-    "claude-overnight"
+    "claude",
+    "chat-completions",
+    "streaming"
   ],
   "license": "MIT",
   "devDependencies": {

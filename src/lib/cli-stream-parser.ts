@@ -9,8 +9,7 @@ import type { AgentStreamEvent } from "./agent-stream-events.js";
  *   We diff against what we've already emitted so consumers see clean deltas.
  * - `{ type: "tool_call", subtype: "started"|"completed", call_id, tool_call: { <kind>ToolCall: { args, result? } } }`
  *   cursor-agent's native tool events. We translate them to Anthropic `tool_use`
- *   blocks so SDK consumers (claude-overnight progress UI, budget tracking,
- *   nudge-on-silence) see tool activity the same way as a direct Anthropic run.
+ *   blocks so SDK consumers see tool activity the same way as a direct Anthropic run.
  * - `{ type: "result", subtype: "success" }` — terminates the stream.
  *
  * Unknown types are ignored (non-JSON lines too) so future cursor CLI updates don't crash.
